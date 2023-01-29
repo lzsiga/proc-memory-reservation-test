@@ -1,0 +1,134 @@
+/* curstest_01.pc */
+
+#include <malloc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define SQLCA_INIT 1
+#define ORACA_INIT 1
+
+#include <sqlca.h>
+#include <oraca.h>
+
+EXEC SQL DECLARE dual TABLE (dummy VARCHAR2(1CHAR));
+
+static void Test1 (void);
+
+static long Mallo_Uordblks(void);
+
+int main (int argc, char **argv)
+{
+    const char *dbuid = "dbuser/dbpwd@tnsname";
+    int i;
+
+    if (argc>=2 && argv[1][0]!='\0') {
+        dbuid= argv[1];
+        strcpy (argv[1], "?");
+    }
+
+    EXEC SQL CONNECT :dbuid;
+    if (sqlca.sqlcode) {
+        fprintf (stderr, "CONNECT failed %d\n",
+                 sqlca.sqlcode);
+        return 1;
+    }
+    fprintf (stderr, "After CONNECT uordblks=%ld", Mallo_Uordblks());
+
+    for (i=0; i<4; ++i) {
+        Test1 ();
+    }
+
+    fputc ('\n', stderr);
+    TiLogF (stderr, 0, "Before disconnect uordblks=%ld", Mallo_Uordblks());
+    OraDisconnAt (dbid);
+    TiLogF (stderr, 0, "After disconnect uordblks=%ld", Mallo_Uordblks());
+
+    return 0;
+}
+
+static void Test1 (void)
+{
+    SQL_CURSOR c1;
+    struct { int num;   } d;
+    struct { short num; } i;
+    int leave;
+
+    fprintf (stderr, "\nTest1\n");
+
+    TiLogF (stderr, 0, "Before ALLOCATE uordblks=%ld", Mallo_Uordblks());
+    EXEC SQL ALLOCATE :c1;
+    if (sqlca.sqlcode) {
+	SqlErrorMessageF ("ALLOCATE cursor");
+	goto RETURN;
+    }
+    TiLogF (stderr, 0, "ALLOCATE ok curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
+	Mallo_Uordblks());
+
+    EXEC SQL EXECUTE
+    BEGIN
+        OPEN :c1 FOR 
+        SELECT 1 FROM DUAL
+	UNION
+        SELECT 2 FROM DUAL;
+    END;
+    END-EXEC;
+    if (sqlca.sqlcode) {
+	SqlErrorMessageF ("EXECUTE plsql");
+	goto RETURN;
+    }
+    TiLogF (stderr, 0, "plsql EXECUTEd curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld",
+	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic, 
+	Mallo_Uordblks());
+
+/*  EXEC SQL WHENEVER NOT FOUND DO break; -- Nem szerencsés */
+
+    for (leave=0; !leave; ) {
+	EXEC SQL FETCH :c1 INTO :d:i;
+	if (sqlca.sqlcode>0) {
+	    TiLogF (stderr, 0, "EOF on FETCH sqlca.sqlcode=%d\n", sqlca.sqlcode);
+	    leave= 1;
+	    continue;
+	} else if (sqlca.sqlcode) {
+	    SqlErrorMessageF ("FETCH");
+	    leave= -1;
+	    continue;
+	}
+	TiLogF (stderr, 0, "FETCH ok value=%d:%i; uordblks=%ld", d.num, i.num,
+	    Mallo_Uordblks());
+    }
+
+    TiLogF (stderr, 0, "Before CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
+	Mallo_Uordblks());
+
+    EXEC SQL CLOSE :c1;
+    if (sqlca.sqlcode) {
+	SqlErrorMessageF ("CLOSE");
+    }
+
+    TiLogF (stderr, 0, "After CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld",
+	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
+	Mallo_Uordblks());
+
+    EXEC SQL FREE :c1;
+    if (sqlca.sqlcode) {
+	SqlErrorMessageF ("FREE");
+    }
+    TiLogF (stderr, 0, "After FREE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld",
+	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
+	Mallo_Uordblks());
+
+    TiLogF (stderr, 0, "Before COMMIT uordblks=%ld", Mallo_Uordblks());
+    EXEC SQL COMMIT;
+    TiLogF (stderr, 0, "After  COMMIT uordblks=%ld", Mallo_Uordblks());
+
+RETURN:;
+}
+static long Mallo_Uordblks(void)
+{
+    long uo;
+    uo= mallinfo().uordblks;
+    return uo;
+}
