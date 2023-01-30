@@ -10,17 +10,44 @@
 
 #include <sqlca.h>
 #include <oraca.h>
+#include <oci.h>
 
-EXEC SQL DECLARE dual TABLE (dummy VARCHAR2(1CHAR));
+EXEC ORACLE OPTION (oraca=yes);
+
+EXEC SQL DECLARE dual TABLE (dummy VARCHAR2(1));
+EXEC SQL DECLARE v$version TABLE (banner VARCHAR2(64));
 
 static void Test1(void);
-
 static long Mallo_Uordblks(void);
+static void OracaCursorStat(void);
+static void PrintCliVer(void);
+static void PrintSerVer(void);
+
+#define CursorDebug() \
+    do { \
+        if (opt.debug_cursor) \
+            fprintf(stderr, "  cursor: curocn=%u ptr1=%p ptr2=%p magic=%lx\n", \
+               (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic); \
+    } while (0)
+
+static struct {
+    int debug_cursor;
+    int print_oraca_stat;
+    int do_commit;
+    int iterations;
+} opt = {
+    0,
+    0,
+    0,
+    5
+};
 
 int main(int argc, char **argv)
 {
     char *dbuid = "dbuser/dbpwd@tnsname";
     int i;
+    long used_prev= 0;
+    long used_next= 0;
 
     (void)IAPFAIL;
     (void)IAPFTL;
@@ -38,16 +65,29 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    PrintCliVer();
+
     EXEC SQL CONNECT :dbuid;
     if (sqlca.sqlcode) {
         fprintf(stderr, "*** CONNECT failed %d\n",
                  sqlca.sqlcode);
         return 1;
     }
+    PrintSerVer();
     fprintf(stderr, "After CONNECT uordblks=%ld", Mallo_Uordblks());
 
-    for (i=0; i<4; ++i) {
+    for (i=0; i<opt.iterations; ++i) {
         Test1();
+        if (opt.print_oraca_stat) OracaCursorStat();
+        if (i+2 == opt.iterations) used_prev= Mallo_Uordblks();
+        if (i+1 == opt.iterations) used_next= Mallo_Uordblks();
+    }
+
+    if (used_prev != used_next) {
+        fprintf(stderr, "\n*** Unexpected memory reservation in the last iteration is %ld bytes\n"
+               , (long)(used_next - used_prev));
+    } else {
+        fprintf(stderr, "\nNo unexpected memory reservation in the last iteration\n");
     }
 
     fputc('\n', stderr);
@@ -74,9 +114,9 @@ static void Test1(void)
                  sqlca.sqlcode);
         exit(2);
     }
-    fprintf(stderr, "ALLOCATE ok curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+    fprintf(stderr, "ALLOCATE ok uordblks=%ld\n",
         Mallo_Uordblks());
+    CursorDebug();
 
     EXEC SQL EXECUTE
     BEGIN
@@ -91,9 +131,9 @@ static void Test1(void)
                  sqlca.sqlcode);
         exit(4);
     }
-    fprintf(stderr, "plsql EXECUTEd curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic, 
+    fprintf(stderr, "plsql EXECUTEd uordblks=%ld\n",
         Mallo_Uordblks());
+    CursorDebug();
 
     for (leave=0; !leave; ) {
         EXEC SQL FETCH :c1 INTO :d:i;
@@ -111,9 +151,9 @@ static void Test1(void)
             Mallo_Uordblks());
     }
 
-    fprintf(stderr, "Before CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+    fprintf(stderr, "Before CLOSE uordblks=%ld\n",
         Mallo_Uordblks());
+    CursorDebug();
 
     EXEC SQL CLOSE :c1;
     if (sqlca.sqlcode) {
@@ -121,22 +161,24 @@ static void Test1(void)
                  sqlca.sqlcode);
     }
 
-    fprintf(stderr, "After CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+    fprintf(stderr, "After CLOSE uordblks=%ld\n",
         Mallo_Uordblks());
+    CursorDebug();
 
     EXEC SQL FREE :c1;
     if (sqlca.sqlcode) {
         fprintf(stderr, "*** FREE failed %d\n",
                  sqlca.sqlcode);
     }
-    fprintf(stderr, "After FREE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+    fprintf(stderr, "After FREE uordblks=%ld\n",
         Mallo_Uordblks());
+    CursorDebug();
 
-    fprintf(stderr, "Before COMMIT uordblks=%ld\n", Mallo_Uordblks());
-    EXEC SQL COMMIT;
-    fprintf(stderr, "After  COMMIT uordblks=%ld\n", Mallo_Uordblks());
+    if (opt.do_commit) {
+        fprintf(stderr, "Before COMMIT uordblks=%ld\n", Mallo_Uordblks());
+        EXEC SQL COMMIT;
+        fprintf(stderr, "After  COMMIT uordblks=%ld\n", Mallo_Uordblks());
+    }
 }
 
 static long Mallo_Uordblks(void)
@@ -144,4 +186,44 @@ static long Mallo_Uordblks(void)
     long uo;
     uo= mallinfo().uordblks;
     return uo;
+}
+
+static void OracaCursorStat(void)
+{
+    fprintf(stderr,
+            "<Cursor stat>"
+            "\n\tMaximum value of MAXOPENCURSORS:    %5ld"
+            "\n\tMaximum open cursors required:      %5ld"
+            "\n\tCurrent number of open cursors:     %5ld"
+            "\n\tNumber of cache reassignments:      %5ld"
+            "\n\tNumber of SQL statement parses:     %5ld"
+            "\n\tNumber of SQL statement executions: %5ld"
+           , (long)oraca.orahoc
+           , (long)oraca.oramoc
+           , (long)oraca.oracoc
+           , (long)oraca.oranor
+           , (long)oraca.oranpr
+           , (long)oraca.oranex
+           );
+}
+
+static void PrintCliVer(void)
+{
+    int major= 0, minor= 0, update= 0, patch= 0,  port= 0;
+
+    OCIClientVersion (&major, &minor, &update, &patch, &port);
+    fprintf (stderr, "Oracle client version %d.%d.%d.%d.%d (%d bit)\n",
+             major, minor, update, patch, port, 8*(int)sizeof(long));
+}
+
+static void PrintSerVer(void)
+{
+    int i;
+    varchar banner[16][64];
+
+    for (i=0; i<16; ++i) banner[i].len= 0;
+    EXEC SQL SELECT banner INTO :banner FROM v$version;
+    if (banner[0].len!=0) {
+        fprintf(stderr, "Server: %.*s\n", banner[0].len, banner[0].arr);
+    }
 }
