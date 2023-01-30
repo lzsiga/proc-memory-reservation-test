@@ -1,4 +1,4 @@
-I feel as I have detected some unexpected memory reservation
+I feel as if I have detected some unexpected memory reservation
 while executing Pro*C program with InstantClient-18.4 on AIX
 
 These are the results of the 'curtest_01' test-program.
