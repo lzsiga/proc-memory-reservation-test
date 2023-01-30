@@ -2,7 +2,7 @@
 
 PLATFORM  := $(shell uname)
 
-ORAINC    := $(foreach I,rdbms/public precomp/public precomp/include,${ORACLE_HOME}/$I)
+ORAINC    := $(foreach I,rdbms/public precomp/public precomp/include sdk/include,${ORACLE_HOME}/$I)
 ORALIB    := ${ORACLE_HOME}/lib
 ORABIN    := ${ORACLE_HOME}/bin
 
