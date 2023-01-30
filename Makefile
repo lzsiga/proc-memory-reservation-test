@@ -6,7 +6,7 @@ PROC      := ${ORACLE_HOME}/bin/proc
 PROCFLAGS := sqlcheck=semantics code=ansi lines=yes
 
 CPPFLAGS  := -I${ORACLE_HOME}/precomp/public
-CFLAGS    := -g
+CFLAGS    := -g -W -Wall -pedantic -Wno-missing-field-initializers
 LDFLAGS   := -g -L${ORACLE_HOME}/lib
 LDLIBS    := -lclntsh
 

@@ -13,119 +13,132 @@
 
 EXEC SQL DECLARE dual TABLE (dummy VARCHAR2(1CHAR));
 
-static void Test1 (void);
+static void Test1(void);
 
 static long Mallo_Uordblks(void);
 
-int main (int argc, char **argv)
+int main(int argc, char **argv)
 {
-    const char *dbuid = "dbuser/dbpwd@tnsname";
+    char *dbuid = "dbuser/dbpwd@tnsname";
     int i;
 
+    (void)IAPFAIL;
+    (void)IAPFTL;
+    (void)IAPSUCC;
+    (void)sqlstm;
+
     if (argc>=2 && argv[1][0]!='\0') {
-        dbuid= argv[1];
-        strcpy (argv[1], "?");
+        unsigned len= strlen(argv[1]);
+        dbuid= malloc(1+len);
+        memcpy(dbuid, argv[1], len+1);
+        memset(argv[1], 0, len);
+        argv[1][0]= '?';
+    } else {
+        fprintf(stderr, "usage: %s %s\n", argv[0], dbuid);
+        return 0;
     }
 
     EXEC SQL CONNECT :dbuid;
     if (sqlca.sqlcode) {
-        fprintf (stderr, "CONNECT failed %d\n",
+        fprintf(stderr, "*** CONNECT failed %d\n",
                  sqlca.sqlcode);
         return 1;
     }
-    fprintf (stderr, "After CONNECT uordblks=%ld", Mallo_Uordblks());
+    fprintf(stderr, "After CONNECT uordblks=%ld", Mallo_Uordblks());
 
     for (i=0; i<4; ++i) {
-        Test1 ();
+        Test1();
     }
 
-    fputc ('\n', stderr);
-    TiLogF (stderr, 0, "Before disconnect uordblks=%ld", Mallo_Uordblks());
-    OraDisconnAt (dbid);
-    TiLogF (stderr, 0, "After disconnect uordblks=%ld", Mallo_Uordblks());
+    fputc('\n', stderr);
+    fprintf(stderr, "Before disconnect uordblks=%ld\n", Mallo_Uordblks());
+    EXEC SQL COMMIT WORK RELEASE;
+    fprintf(stderr, "After disconnect uordblks=%ld\n", Mallo_Uordblks());
 
     return 0;
 }
 
-static void Test1 (void)
+static void Test1(void)
 {
     SQL_CURSOR c1;
     struct { int num;   } d;
     struct { short num; } i;
     int leave;
 
-    fprintf (stderr, "\nTest1\n");
+    fprintf(stderr, "\nTest1\n");
 
-    TiLogF (stderr, 0, "Before ALLOCATE uordblks=%ld", Mallo_Uordblks());
+    fprintf(stderr, "Before ALLOCATE uordblks=%ld\n", Mallo_Uordblks());
     EXEC SQL ALLOCATE :c1;
     if (sqlca.sqlcode) {
-	SqlErrorMessageF ("ALLOCATE cursor");
-	goto RETURN;
+        fprintf(stderr, "*** ALLOCATE failed %d\n",
+                 sqlca.sqlcode);
+        exit(2);
     }
-    TiLogF (stderr, 0, "ALLOCATE ok curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
-	Mallo_Uordblks());
+    fprintf(stderr, "ALLOCATE ok curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+        Mallo_Uordblks());
 
     EXEC SQL EXECUTE
     BEGIN
-        OPEN :c1 FOR 
+        OPEN :c1 FOR
         SELECT 1 FROM DUAL
-	UNION
+        UNION
         SELECT 2 FROM DUAL;
     END;
     END-EXEC;
     if (sqlca.sqlcode) {
-	SqlErrorMessageF ("EXECUTE plsql");
-	goto RETURN;
+        fprintf(stderr, "*** EXECUTE failed %d\n",
+                 sqlca.sqlcode);
+        exit(4);
     }
-    TiLogF (stderr, 0, "plsql EXECUTEd curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld",
-	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic, 
-	Mallo_Uordblks());
-
-/*  EXEC SQL WHENEVER NOT FOUND DO break; -- Nem szerencsés */
+    fprintf(stderr, "plsql EXECUTEd curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic, 
+        Mallo_Uordblks());
 
     for (leave=0; !leave; ) {
-	EXEC SQL FETCH :c1 INTO :d:i;
-	if (sqlca.sqlcode>0) {
-	    TiLogF (stderr, 0, "EOF on FETCH sqlca.sqlcode=%d\n", sqlca.sqlcode);
-	    leave= 1;
-	    continue;
-	} else if (sqlca.sqlcode) {
-	    SqlErrorMessageF ("FETCH");
-	    leave= -1;
-	    continue;
-	}
-	TiLogF (stderr, 0, "FETCH ok value=%d:%i; uordblks=%ld", d.num, i.num,
-	    Mallo_Uordblks());
+        EXEC SQL FETCH :c1 INTO :d:i;
+        if (sqlca.sqlcode>0) {
+            fprintf(stderr, "EOF on FETCH sqlca.sqlcode=%d\n", sqlca.sqlcode);
+            leave= 1;
+            continue;
+        } else if (sqlca.sqlcode) {
+            fprintf(stderr, "*** FETCH failed %d\n",
+                     sqlca.sqlcode);
+            leave= -1;
+            continue;
+        }
+        fprintf(stderr, "FETCH ok value=%d:%i; uordblks=%ld\n", d.num, i.num,
+            Mallo_Uordblks());
     }
 
-    TiLogF (stderr, 0, "Before CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
-	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
-	Mallo_Uordblks());
+    fprintf(stderr, "Before CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+        Mallo_Uordblks());
 
     EXEC SQL CLOSE :c1;
     if (sqlca.sqlcode) {
-	SqlErrorMessageF ("CLOSE");
+        fprintf(stderr, "*** CLOSE failed %d\n",
+                 sqlca.sqlcode);
     }
 
-    TiLogF (stderr, 0, "After CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld",
-	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
-	Mallo_Uordblks());
+    fprintf(stderr, "After CLOSE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+        Mallo_Uordblks());
 
     EXEC SQL FREE :c1;
     if (sqlca.sqlcode) {
-	SqlErrorMessageF ("FREE");
+        fprintf(stderr, "*** FREE failed %d\n",
+                 sqlca.sqlcode);
     }
-    TiLogF (stderr, 0, "After FREE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld",
-	(unsigned)c1.curocn, c1.ptr1, c1.ptr2, (unsigned long)c1.magic,
-	Mallo_Uordblks());
+    fprintf(stderr, "After FREE curocn=%u ptr1=%p ptr2=%p magic=%lx; uordblks=%ld\n",
+       (unsigned)c1.curocn, c1.ptr1, c1.ptr2,(unsigned long)c1.magic,
+        Mallo_Uordblks());
 
-    TiLogF (stderr, 0, "Before COMMIT uordblks=%ld", Mallo_Uordblks());
+    fprintf(stderr, "Before COMMIT uordblks=%ld\n", Mallo_Uordblks());
     EXEC SQL COMMIT;
-    TiLogF (stderr, 0, "After  COMMIT uordblks=%ld", Mallo_Uordblks());
-
-RETURN:;
+    fprintf(stderr, "After  COMMIT uordblks=%ld\n", Mallo_Uordblks());
 }
+
 static long Mallo_Uordblks(void)
 {
     long uo;
